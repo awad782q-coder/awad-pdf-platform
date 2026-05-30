@@ -12,7 +12,6 @@ let allFiles = [];
 
 document.addEventListener("DOMContentLoaded", function () {
   initializeSupabase();
-
   showLogin();
 });
 
@@ -390,4 +389,4 @@ function dataUrlToUint8Array(dataUrl) {
   }
 
   return bytes;
-    }
+      }
