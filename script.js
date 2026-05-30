@@ -320,8 +320,7 @@ async function createPdfWithAutoQr(file, qrContent) {
 function viewFile(fileId) {
   window.open(getViewerUrl(fileId), "_blank");
 }
-
-function downloadOriginal(fileId) {
+async function downloadOriginal(fileId) {
   const file = getFileById(fileId);
 
   if (!file) {
@@ -329,13 +328,36 @@ function downloadOriginal(fileId) {
     return;
   }
 
-  const link = document.createElement("a");
-  link.href = file.public_url;
-  link.download = file.name;
-  link.target = "_blank";
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
+  try {
+    const response = await fetch(file.public_url);
+
+    if (!response.ok) {
+      throw new Error("تعذر تحميل الملف من الرابط.");
+    }
+
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+
+    const today = new Date();
+    const year = today.getFullYear();
+    const month = String(today.getMonth() + 1).padStart(2, "0");
+    const day = String(today.getDate()).padStart(2, "0");
+
+    const fileName = "SickLeaveCertificate-" + year + "-" + month + "-" + day + ".pdf";
+
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = fileName;
+    link.style.display = "none";
+
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    alert("تعذر تحميل الملف: " + error.message);
+  }
 }
 
 async function deleteFile(fileId) {
