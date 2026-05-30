@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <title>عرض ملف PDF</title>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+
+  <style>
+    * {
+      box-sizing: border-box;
+      font-family: Arial, sans-serif;
+    }
+
+    body {
+      margin: 0;
+      background: #e5e7eb;
+      color: #0f172a;
+    }
+
+    .viewer {
+      width: 100%;
+      min-height: 100vh;
+      padding: 10px;
+      overflow: auto;
+      text-align: center;
+    }
+
+    .pdf-page-canvas {
+      display: block;
+      width: 100%;
+      max-width: 900px;
+      height: auto;
+      margin: 0 auto 18px auto;
+      background: white;
+      box-shadow: 0 3px 12px rgba(15, 23, 42, 0.15);
+    }
+
+    .error-message {
+      max-width: 600px;
+      margin: 80px auto;
+      background: white;
+      padding: 25px;
+      border-radius: 18px;
+      line-height: 1.9;
+      box-shadow: 0 4px 18px rgba(15, 23, 42, 0.12);
+      color: #dc2626;
+    }
+  </style>
+</head>
+
+<body>
+  <main id="viewer" class="viewer"></main>
+
+  <script>
+    const SUPABASE_URL = "https://kxkkoadoybxhdoxqmeqj.supabase.co/rest/v1/";
+    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4a2tvYWRveWJ4aGRveHFtZXFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAxNDczMjcsImV4cCI6MjA5NTcyMzMyN30.PbXYYeNfsQGIYgGWcemD7QZryxs_xhlkWsAVG-PnC2A";
+
+    const TABLE_NAME = "pdf_documents";
+
+    const supabaseClient = window.supabase.createClient(
+      SUPABASE_URL,
+      SUPABASE_ANON_KEY
+    );
+
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js";
+
+    document.addEventListener("DOMContentLoaded", loadFileFromUrl);
+
+    async function loadFileFromUrl() {
+      const params = new URLSearchParams(window.location.search);
+      const fileId = params.get("id");
+
+      if (!fileId) {
+        showError("رابط غير صحيح. لا يوجد رقم ملف.");
+        return;
+      }
+
+      const result = await supabaseClient
+        .from(TABLE_NAME)
+        .select("id, name, public_url, visits")
+        .eq("id", fileId)
+        .single();
+
+      if (result.error || !result.data) {
+        showError("تعذر العثور على الملف.");
+        return;
+      }
+
+      const file = result.data;
+
+      document.title = file.name;
+
+      renderPdfFast(file.public_url);
+      increaseVisits(file);
+    }
+
+    async function increaseVisits(file) {
+      const nextVisits = Number(file.visits || 0) + 1;
+
+      await supabaseClient
+        .from(TABLE_NAME)
+        .update({ visits: nextVisits })
+        .eq("id", file.id);
+    }
+
+    async function renderPdfFast(pdfUrl) {
+      const viewer = document.getElementById("viewer");
+      viewer.innerHTML = "";
+
+      try {
+        const loadingTask = pdfjsLib.getDocument({
+          url: pdfUrl,
+          disableAutoFetch: false,
+          disableStream: false
+        });
+
+        const pdf = await loadingTask.promise;
+
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+          renderPage(pdf, pageNumber, viewer);
+        }
+      } catch (error) {
+        showError("تعذر عرض الملف: " + error.message);
+      }
+    }
+
+    async function renderPage(pdf, pageNumber, viewer) {
+      const page = await pdf.getPage(pageNumber);
+
+      const viewport = page.getViewport({ scale: 1.3 });
+
+      const canvas = document.createElement("canvas");
+      canvas.className = "pdf-page-canvas";
+
+      const context = canvas.getContext("2d", {
+        alpha: false
+      });
+
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+
+      viewer.appendChild(canvas);
+
+      await page.render({
+        canvasContext: context,
+        viewport: viewport
+      }).promise;
+    }
+
+    function showError(text) {
+      document.getElementById("viewer").innerHTML =
+        "<div class='error-message'>" + text + "</div>";
+    }
+  </script>
+</body>
+</html>
