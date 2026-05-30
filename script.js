@@ -1,4 +1,4 @@
-const SUPABASE_URL = "https://kxkkoadoybxhdoxqmeqj.supabase.co/rest/v1/";
+const SUPABASE_URL = "https://kxkkoadoybxhdoxqmeqj.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt4a2tvYWRveWJ4aGRveHFtZXFqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODAxNDczMjcsImV4cCI6MjA5NTcyMzMyN30.PbXYYeNfsQGIYgGWcemD7QZryxs_xhlkWsAVG-PnC2A";
 
 const BUCKET_NAME = "pdf-files";
@@ -6,21 +6,33 @@ const TABLE_NAME = "pdf_documents";
 
 const LOGIN_USER = "Awad";
 const LOGIN_PASS = "12345";
-const SESSION_KEY = "awad_pdf_logged_in";
 
-const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
+let supabaseClient = null;
 let allFiles = [];
 
 document.addEventListener("DOMContentLoaded", function () {
-  const isLoggedIn = localStorage.getItem(SESSION_KEY) === "yes";
+  initializeSupabase();
 
-  if (isLoggedIn) {
-    showApp();
-  } else {
-    showLogin();
-  }
+  showLogin();
 });
+
+function initializeSupabase() {
+  const urlReady =
+    SUPABASE_URL &&
+    SUPABASE_URL !== "ضع رابط Supabase هنا" &&
+    SUPABASE_URL.startsWith("https://") &&
+    SUPABASE_URL.endsWith(".supabase.co");
+
+  const keyReady =
+    SUPABASE_ANON_KEY &&
+    SUPABASE_ANON_KEY !== "ضع مفتاح anon public هنا";
+
+  if (urlReady && keyReady && window.supabase) {
+    supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  } else {
+    supabaseClient = null;
+  }
+}
 
 function showLogin() {
   document.getElementById("loginPage").classList.remove("hidden");
@@ -30,6 +42,13 @@ function showLogin() {
 function showApp() {
   document.getElementById("loginPage").classList.add("hidden");
   document.getElementById("appPage").classList.remove("hidden");
+
+  if (!supabaseClient) {
+    document.getElementById("filesList").innerHTML =
+      "<p class='error'>تنبيه: تأكد أن رابط Supabase ينتهي بـ .supabase.co بدون /rest/v1/، وأن مفتاح anon public موجود.</p>";
+    return;
+  }
+
   loadFiles();
 }
 
@@ -39,7 +58,6 @@ function login() {
   const errorElement = document.getElementById("loginError");
 
   if (username === LOGIN_USER && password === LOGIN_PASS) {
-    localStorage.setItem(SESSION_KEY, "yes");
     errorElement.textContent = "";
     showApp();
     return;
@@ -49,7 +67,8 @@ function login() {
 }
 
 function logout() {
-  localStorage.removeItem(SESSION_KEY);
+  document.getElementById("username").value = "";
+  document.getElementById("password").value = "";
   showLogin();
 }
 
@@ -82,8 +101,12 @@ function formatSize(bytes) {
 }
 
 async function loadFiles() {
+  if (!supabaseClient) {
+    return;
+  }
+
   const filesList = document.getElementById("filesList");
-  filesList.innerHTML = "جاري تحميل الملفات...";
+  filesList.innerHTML = "<p class='small'>جاري تحميل الملفات...</p>";
 
   const result = await supabaseClient
     .from(TABLE_NAME)
@@ -91,7 +114,10 @@ async function loadFiles() {
     .order("created_at", { ascending: false });
 
   if (result.error) {
-    filesList.innerHTML = "حدث خطأ أثناء تحميل الملفات: " + result.error.message;
+    filesList.innerHTML =
+      "<p class='error'>حدث خطأ أثناء تحميل الملفات: " +
+      result.error.message +
+      "</p>";
     return;
   }
 
@@ -101,7 +127,8 @@ async function loadFiles() {
 
 function renderFiles() {
   const filesList = document.getElementById("filesList");
-  const searchValue = document.getElementById("searchInput").value.trim().toLowerCase();
+  const searchInput = document.getElementById("searchInput");
+  const searchValue = searchInput ? searchInput.value.trim().toLowerCase() : "";
 
   const filteredFiles = allFiles.filter(function (file) {
     return file.name.toLowerCase().includes(searchValue);
@@ -138,9 +165,8 @@ function renderFiles() {
       </div>
 
       <div class="file-actions">
-        <button class="green" onclick="downloadWithQr('${file.id}')">تحميل + QR</button>
         <button class="secondary" onclick="viewFile('${file.id}')">عرض الملف</button>
-        <button onclick="downloadOriginal('${file.id}')">تحميل الأصل</button>
+        <button onclick="downloadOriginal('${file.id}')">تحميل الملف</button>
         <button class="danger" onclick="deleteFile('${file.id}')">حذف</button>
       </div>
     `;
@@ -162,9 +188,13 @@ function getFileById(fileId) {
 }
 
 async function uploadPdf() {
+  if (!supabaseClient) {
+    alert("لم يتم إعداد Supabase داخل ملف script.js.");
+    return;
+  }
+
   const input = document.getElementById("pdfInput");
   const status = document.getElementById("uploadStatus");
-
   const file = input.files[0];
 
   if (!file) {
@@ -177,75 +207,119 @@ async function uploadPdf() {
     return;
   }
 
-  status.textContent = "جاري رفع الملف...";
+  status.textContent = "جاري إنشاء رابط العرض وإدراج QR...";
 
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
-  const filePath = Date.now() + "-" + crypto.randomUUID() + "-" + safeName;
+  try {
+    const fileId = createUuid();
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "-");
+    const filePath = fileId + "-QR-" + safeName;
 
-  const uploadResult = await supabaseClient.storage
-    .from(BUCKET_NAME)
-    .upload(filePath, file, {
-      contentType: "application/pdf",
-      upsert: false
-    });
+    const publicUrlResult = supabaseClient.storage
+      .from(BUCKET_NAME)
+      .getPublicUrl(filePath);
 
-  if (uploadResult.error) {
-    status.textContent = "فشل رفع الملف: " + uploadResult.error.message;
-    return;
+    const finalPublicUrl = publicUrlResult.data.publicUrl;
+    const viewerUrl = getViewerUrl(fileId);
+
+    const qrPdfBlob = await createPdfWithAutoQr(file, viewerUrl);
+
+    status.textContent = "جاري رفع الملف بعد إدراج QR...";
+
+    const uploadResult = await supabaseClient.storage
+      .from(BUCKET_NAME)
+      .upload(filePath, qrPdfBlob, {
+        contentType: "application/pdf",
+        upsert: false
+      });
+
+    if (uploadResult.error) {
+      status.textContent = "فشل رفع الملف: " + uploadResult.error.message;
+      return;
+    }
+
+    const insertResult = await supabaseClient
+      .from(TABLE_NAME)
+      .insert({
+        id: fileId,
+        name: file.name,
+        storage_path: filePath,
+        public_url: finalPublicUrl,
+        size_bytes: qrPdfBlob.size,
+        visits: 0
+      });
+
+    if (insertResult.error) {
+      status.textContent =
+        "تم رفع الملف لكن فشل حفظ بياناته: " + insertResult.error.message;
+      return;
+    }
+
+    input.value = "";
+    status.textContent = "تم رفع الملف مع إدراج QR وحفظه بنجاح.";
+
+    await loadFiles();
+  } catch (error) {
+    status.textContent = "حدث خطأ أثناء تجهيز QR: " + error.message;
   }
-
-  const publicUrlResult = supabaseClient.storage
-    .from(BUCKET_NAME)
-    .getPublicUrl(filePath);
-
-  const publicUrl = publicUrlResult.data.publicUrl;
-
-  const insertResult = await supabaseClient
-    .from(TABLE_NAME)
-    .insert({
-      name: file.name,
-      storage_path: filePath,
-      public_url: publicUrl,
-      size_bytes: file.size,
-      visits: 0
-    });
-
-  if (insertResult.error) {
-    status.textContent = "تم رفع الملف لكن فشل حفظ بياناته: " + insertResult.error.message;
-    return;
-  }
-
-  input.value = "";
-  status.textContent = "تم رفع الملف وحفظه بنجاح.";
-
-  await loadFiles();
 }
 
-async function viewFile(fileId) {
-  const file = getFileById(fileId);
-
-  if (!file) {
-    alert("لم يتم العثور على الملف.");
-    return;
+function createUuid() {
+  if (window.crypto && crypto.randomUUID) {
+    return crypto.randomUUID();
   }
 
-  const currentVisits = Number(file.visits || 0);
-  const nextVisits = currentVisits + 1;
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, function (char) {
+    const random = Math.random() * 16 | 0;
+    const value = char === "x" ? random : (random & 0x3 | 0x8);
+    return value.toString(16);
+  });
+}
 
-  document.getElementById("viewerTitle").textContent = file.name;
-  document.getElementById("pdfViewer").src = file.public_url;
+function getViewerUrl(fileId) {
+  const currentPath = window.location.pathname;
+  const basePath = currentPath.substring(0, currentPath.lastIndexOf("/") + 1);
 
-  file.visits = nextVisits;
-  renderFiles();
+  return window.location.origin + basePath + "viewer.html?id=" + fileId;
+}
 
-  const updateResult = await supabaseClient
-    .from(TABLE_NAME)
-    .update({ visits: nextVisits })
-    .eq("id", file.id);
+async function createPdfWithAutoQr(file, qrContent) {
+  const qrPage = Number(document.getElementById("qrPage").value || 1);
+  const qrX = Number(document.getElementById("qrX").value || 410);
+  const qrY = Number(document.getElementById("qrY").value || 70);
+  const qrSize = Number(document.getElementById("qrSize").value || 95);
 
-  if (updateResult.error) {
-    alert("تعذر تحديث عدد الزيارات: " + updateResult.error.message);
-  }
+  const arrayBuffer = await file.arrayBuffer();
+
+  const pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer);
+  const pages = pdfDoc.getPages();
+
+  const pageIndex = Math.min(Math.max(qrPage - 1, 0), pages.length - 1);
+  const page = pages[pageIndex];
+
+  const qrDataUrl = await QRCode.toDataURL(qrContent, {
+    margin: 1,
+    width: qrSize
+  });
+
+  const qrImageBytes = dataUrlToUint8Array(qrDataUrl);
+  const qrImage = await pdfDoc.embedPng(qrImageBytes);
+
+  page.drawImage(qrImage, {
+    x: qrX,
+    y: qrY,
+    width: qrSize,
+    height: qrSize
+  });
+
+  const newPdfBytes = await pdfDoc.save();
+
+  return new Blob([newPdfBytes], {
+    type: "application/pdf"
+  });
+}
+
+function viewFile(fileId) {
+  window.open(getViewerUrl(fileId), "_blank");
 }
 
 function downloadOriginal(fileId) {
@@ -302,74 +376,7 @@ async function deleteFile(fileId) {
     return item.id !== file.id;
   });
 
-  const viewer = document.getElementById("pdfViewer");
-  if (viewer.src === file.public_url) {
-    viewer.src = "";
-    document.getElementById("viewerTitle").textContent = "صفحة العرض";
-  }
-
   renderFiles();
-}
-
-async function downloadWithQr(fileId) {
-  const file = getFileById(fileId);
-
-  if (!file) {
-    alert("لم يتم العثور على الملف.");
-    return;
-  }
-
-  try {
-    const qrPage = Number(document.getElementById("qrPage").value || 1);
-    const qrX = Number(document.getElementById("qrX").value || 420);
-    const qrY = Number(document.getElementById("qrY").value || 80);
-    const qrSize = Number(document.getElementById("qrSize").value || 95);
-
-    const response = await fetch(file.public_url);
-    const arrayBuffer = await response.arrayBuffer();
-
-    const pdfDoc = await PDFLib.PDFDocument.load(arrayBuffer);
-    const pages = pdfDoc.getPages();
-
-    const pageIndex = Math.min(Math.max(qrPage - 1, 0), pages.length - 1);
-    const page = pages[pageIndex];
-
-    const qrContent = file.public_url;
-
-    const qrDataUrl = await QRCode.toDataURL(qrContent, {
-      margin: 1,
-      width: qrSize
-    });
-
-    const qrImageBytes = dataUrlToUint8Array(qrDataUrl);
-    const qrImage = await pdfDoc.embedPng(qrImageBytes);
-
-    page.drawImage(qrImage, {
-      x: qrX,
-      y: qrY,
-      width: qrSize,
-      height: qrSize
-    });
-
-    const newPdfBytes = await pdfDoc.save();
-
-    const blob = new Blob([newPdfBytes], {
-      type: "application/pdf"
-    });
-
-    const url = URL.createObjectURL(blob);
-
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "QR-" + file.name;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-
-    URL.revokeObjectURL(url);
-  } catch (error) {
-    alert("تعذر إنشاء نسخة QR: " + error.message);
-  }
 }
 
 function dataUrlToUint8Array(dataUrl) {
@@ -383,4 +390,4 @@ function dataUrlToUint8Array(dataUrl) {
   }
 
   return bytes;
-          }
+    }
